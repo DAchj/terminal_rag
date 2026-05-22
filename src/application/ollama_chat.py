@@ -1,6 +1,10 @@
+from doctest import debug
+
 import ollama
 
 from application.chromadb import search_by_chromadb
+from application.rerank import rerank_search
+
 
 def chat():
     model='qwen2.5:7b'
@@ -14,9 +18,11 @@ def chat():
           break
       if not userinput:
           continue
-      embeddingres=search_by_chromadb(userinput)
+      embeddingres=search_by_chromadb(userinput)[0]
+      rerankRes,_=rerank_search(embeddingres,userinput)
+      print(rerankRes)
       prompt=f"""
-      请你基于以下信息回答下边的问题，如果不知道就回答不知道，信息：{chr(10).join(f'- {c}' for c in embeddingres)}，
+      请你基于以下信息回答下边的问题，如果不知道就回答不知道，信息：{chr(10).join(f'- {c}' for c in rerankRes)}，
       问题：{userinput}
       """
       messages.append({"role":"user","content":prompt})

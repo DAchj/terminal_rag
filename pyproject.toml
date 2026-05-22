@@ -1,15 +1,26 @@
 [project]
 name = "application"
 version = "0.1.0"
-requires-python = ">=3.13"
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "chromadb>=1.5.9",
-    "numpy>=2.4.6",
+    "numpy>=2.2.6",
     "ollama>=0.6.2",
+    "sentence-transformers>=5.5.1",
+    "torch==2.11.0",
+    "torchvision==0.26.0",
+    "torchaudio==2.11.0",
 ]
 
 [project.scripts]
 application = "application.application:main"
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 [build-system]
 requires = ["uv_build>=0.11.15,<0.12.0"]
