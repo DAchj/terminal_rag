@@ -1,13 +1,10 @@
-from application.chromadb import initDB, initData,del_collection
-from application.ollama_chat import chat
-from application.rerank import initModel
+import os
+# 强制rerank模型从本地加载不去官网拉取更新
+os.environ['HF_HUB_OFFLINE'] = '1'
+import uvicorn
 
 
 def main():
-   initModel()
-   initDB()
-   del_collection()
-   initData()
-   chat()
+    uvicorn.run("application.api:app", host="0.0.0.0", port=8001, reload=False)
 
 
