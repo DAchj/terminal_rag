@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from application.bean_context import mysqlConnectPool
 from application.utils.jwt_helper import create_token, parse_token
+from application.common import Result
 import hashlib
 
 router = APIRouter()
@@ -32,10 +33,10 @@ def login(req: LoginRequest):
     conn.close()
 
     if not user:
-        raise HTTPException(status_code=401, detail="用户名或密码错误")
+        return Result.error(code=401, message="用户名或密码错误")
 
     token = create_token(user[0], user[1])
-    return {"token": token, "user_id": user[0], "username": user[1]}
+    return Result.success(data={"token": token, "user_id": user[0], "username": user[1]})
 
 
 # ====== 注册 ======
@@ -48,7 +49,7 @@ def register(req: RegisterRequest):
     if cursor.fetchone():
         cursor.close()
         conn.close()
-        raise HTTPException(status_code=400, detail="用户名已存在")
+        return Result.error(code=400, message="用户名已存在")
 
     password_hash = hashlib.sha256(req.password.encode()).hexdigest()
     cursor.execute("INSERT INTO users (username, password) VALUES (%s, %s)",
@@ -59,7 +60,7 @@ def register(req: RegisterRequest):
     conn.close()
 
     token = create_token(user_id, req.username)
-    return {"token": token, "user_id": user_id, "username": req.username}
+    return Result.success(data={"token": token, "user_id": user_id, "username": req.username})
 
 
 # ====== 解析 token 的依赖方法（给其他接口用）======

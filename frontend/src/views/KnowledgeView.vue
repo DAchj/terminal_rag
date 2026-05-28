@@ -88,7 +88,7 @@ async function handleAdd() {
   addLoading.value = true
   try {
     const res = await addKnowledge(texts)
-    message.success(res.data.message)
+    message.success('入库成功')
     addText.value = ''
   } catch {
     message.error('入库失败')
@@ -260,6 +260,21 @@ async function handleClear() {
   line-height: 1.8;
   color: #555;
   white-space: pre-wrap;
+}
+
+@media (max-width: 768px) {
+  .knowledge-layout { flex-direction: column; }
+  .k-sidebar {
+    width: 100%; border-right: none;
+    border-bottom: 1px solid #eee; padding: 8px;
+  }
+  .k-menu { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+  .k-menu-item { font-size: 13px; padding: 8px 14px; }
+  .k-menu-icon { font-size: 14px; }
+  .k-content { padding: 20px; }
+  .panel-title { font-size: 18px; }
+  .search-row { flex-direction: column; }
+  .k-btn { width: 100%; }
 }
 
 .clear-card {

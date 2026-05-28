@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const BASE = 'http://localhost:8001'
+const BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8001'
 const api = axios.create({ baseURL: BASE })
 
 // 请求拦截器：自动带 token
@@ -12,9 +12,28 @@ api.interceptors.request.use(config => {
   return config
 })
 
-// 响应拦截器：token 过期跳转登录
+// 响应拦截器：统一解包 Result 格式，自动处理业务错误
 api.interceptors.response.use(
-  res => res,
+  res => {
+    const body = res.data
+    // 如果响应体是 Result 包装格式（有 code 字段）
+    if (body && body.code !== undefined) {
+      if (body.code === 401) {
+        // token 过期或未登录
+        localStorage.removeItem('token')
+        localStorage.removeItem('user_id')
+        localStorage.removeItem('username')
+        window.location.href = '/login'
+        return Promise.reject(new Error(body.message))
+      }
+      if (body.code !== 200) {
+        return Promise.reject(new Error(body.message))
+      }
+      // 解包：把 data 提取出来，后续代码直接 res.data 拿到数据
+      res.data = body.data
+    }
+    return res
+  },
   err => {
     if (err.response?.status === 401) {
       localStorage.removeItem('token')
@@ -35,7 +54,8 @@ export function chat(question) {
   return api.post('/chat', { question })
 }
 
-export function chatStream(question, sessionId, onData, onDone, onError) {
+export function chatStream(question, sessionId, onData, onDone, onError, onTruncated) {
+  const MARKER = '__TRUNCATED__'
   fetch(`${BASE}/chatStream`, {
     method: 'POST',
     headers: {
@@ -53,10 +73,32 @@ export function chatStream(question, sessionId, onData, onDone, onError) {
     }
     const reader = response.body.getReader()
     const decoder = new TextDecoder()
+    let truncated = false
+    let buffer = ''
     while (true) {
       const { done, value } = await reader.read()
-      if (done) { onDone(); break }
-      onData(decoder.decode(value))
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const idx = buffer.indexOf(MARKER)
+      if (idx !== -1) {
+        truncated = true
+        const content = buffer.slice(0, idx)
+        if (content) onData(content)
+        buffer = ''
+      } else {
+        // 保留末尾可能被截断的标记字符，其余吐出
+        const safeEnd = Math.max(0, buffer.length - (MARKER.length - 1))
+        if (safeEnd > 0) {
+          onData(buffer.slice(0, safeEnd))
+          buffer = buffer.slice(safeEnd)
+        }
+      }
+    }
+    if (buffer) onData(buffer)
+    if (truncated) {
+      onTruncated ? onTruncated() : onDone()
+    } else {
+      onDone()
     }
   }).catch(onError)
 }

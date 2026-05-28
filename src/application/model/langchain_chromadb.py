@@ -1,16 +1,25 @@
 import os
 from dotenv import load_dotenv
 from langchain_chroma import Chroma
-from langchain_ollama import OllamaEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
 class Chromadb:
     def __init__(self):
         load_dotenv()
-        self.model = os.getenv("EMBEDDING_MODEL")
+        self.model = os.getenv("EMBEDDING_MODEL", "bge-m3")
         self.persistDirectory=os.getenv("chroma_db_path")
-        self.embeddings= OllamaEmbeddings(model=self.model)
+        self.embeddings= OpenAIEmbeddings(
+            model=self.model,
+            api_key="not-needed",
+            base_url=f"{os.getenv('XINFERENCE_HOST', 'http://192.168.31.120:9997')}/v1"
+        )
         self.vectorStore=Chroma(
             collection_name=os.getenv("collection_name"),
+            embedding_function=self.embeddings,
+            persist_directory=self.persistDirectory
+        )
+        self.longMemoryStore=Chroma(
+            collection_name="longMemory",
             embedding_function=self.embeddings,
             persist_directory=self.persistDirectory
         )
@@ -21,13 +30,29 @@ class Chromadb:
             texts=texts,
             metadatas=metadata_list
         )
+    def write_long_memory(self,texts,metadata_list=None):
+        self.longMemoryStore.add_texts(
+            texts=texts,
+            metadatas=metadata_list
+        )
 
     def read(self,query,k=5):
        return self.vectorStore.similarity_search(query=query,k=k)
 
-    # 获取rerank查询工具
+    # 获取知识库rerank查询工具
     def get_base_retriever(self,k=5):
        return self.vectorStore.as_retriever(search_kwargs={"k": k})
+
+    # 获取长期记忆向量库查询工具
+    def get_long_memory_retrieve(self,k=10,filter=None):
+        search_kwargs = {
+            "k": k
+        }
+        if filter:
+            search_kwargs["filter"] = filter
+        return self.longMemoryStore.as_retriever(
+            search_kwargs=search_kwargs
+        )
 
     # 清空知识库
     def clear(self):

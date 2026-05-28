@@ -13,13 +13,23 @@ const router = createRouter({
   routes
 })
 
-// 路由守卫：没 token 跳转到登录页
+// 路由守卫
 router.beforeEach((to, from, next) => {
-  if (to.meta.requiresAuth && !localStorage.getItem('token')) {
+  const hasToken = !!localStorage.getItem('token')
+
+  // 没 token 不能进需要登录的页面
+  if (to.meta.requiresAuth && !hasToken) {
     next('/login')
-  } else {
-    next()
+    return
   }
+
+  // 有 token 不能进登录/注册页
+  if (hasToken && (to.path === '/login' || to.path === '/register')) {
+    next('/chat')
+    return
+  }
+
+  next()
 })
 
 export default router

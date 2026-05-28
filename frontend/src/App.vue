@@ -120,4 +120,14 @@ body {
 .logout-btn { font-size: 13px; color: #ff4d4f; cursor: pointer; }
 .logout-btn:hover { color: #ff7875; }
 .app-main { flex: 1; }
+
+/* ====== 移动端适配 ====== */
+@media (max-width: 768px) {
+  .header-inner { padding: 0 12px; height: 48px; }
+  .logo { font-size: 16px; margin-right: 16px; }
+  .nav-tab { padding: 6px 12px; font-size: 13px; }
+  .nav-tab span:last-child { display: none; }
+  .nav-icon { font-size: 18px; }
+  .user-name { display: none; }
+}
 </style>

@@ -1,7 +1,10 @@
 <template>
   <div class="chat-layout">
+    <!-- 移动端侧栏遮罩 -->
+    <div v-if="showSidebar" class="sidebar-overlay" @click="showSidebar = false"></div>
+
     <!-- 左侧会话列表 -->
-    <aside class="sidebar">
+    <aside :class="['sidebar', { 'sidebar-open': showSidebar }]">
       <div class="sidebar-header">
         <button class="new-chat-btn" @click="startNewChat"><PlusOutlined /> 启动新会话</button>
       </div>
@@ -11,7 +14,7 @@
           v-for="conv in sessions"
           :key="conv.session_id"
           :class="['conversation-item', { active: conv.session_id === currentSessionId }]"
-          @click="selectConversation(conv)"
+          @click="selectConversation(conv); showSidebar = false"
         >
           <MessageOutlined class="conv-icon" />
           <span class="conv-title" :title="conv.title">{{ conv.title }}</span>
@@ -28,6 +31,11 @@
 
     <!-- 右侧聊天区 -->
     <main class="chat-area">
+      <!-- 移动端顶部菜单按钮 -->
+      <div class="mobile-topbar">
+        <button class="menu-toggle" @click="showSidebar = true"><MessageOutlined /></button>
+        <span class="mobile-title">{{ currentSessionId ? currentConvTitle : '所有会话' }}</span>
+      </div>
       <!-- 聊天模式 -->
       <template v-if="currentSessionId">
         <div ref="messageListRef" class="messages">
@@ -43,8 +51,16 @@
               <div class="bubble" :class="msg.role === 'user' ? 'bubble-user' : 'bubble-ai'">
                 {{ msg.content }}
               </div>
-              <div :class="['msg-time', msg.role === 'user' ? 'time-right' : 'time-left']">
-                {{ msg.created_date || '' }}
+              <div :class="['bubble-actions', msg.role === 'user' ? 'actions-right' : 'actions-left']">
+                <CopyOutlined
+                  class="copy-btn"
+                  title="复制"
+                  @click="copyContent(msg.content)"
+                />
+              </div>
+              <!-- 继续生成：只出现在最后一条 AI 消息的右下角 -->
+              <div v-if="isTruncated && !loading && idx === messages.length - 1 && msg.role === 'assistant'" class="continue-wrapper">
+                <button class="continue-btn" @click="continueGeneration">继续生成</button>
               </div>
             </div>
           </div>
@@ -106,8 +122,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
-import { MessageOutlined, PlusOutlined } from '@ant-design/icons-vue'
+import { ref, computed, onMounted } from 'vue'
+import { message } from 'ant-design-vue'
+import { MessageOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
 import { chatStream, getSessions, getChatMessages, saveSession, deleteSession } from '../api'
 
 const sessions = ref([])
@@ -115,8 +132,14 @@ const messages = ref([])
 const currentSessionId = ref(null)
 const inputText = ref('')
 const loading = ref(false)
+const isTruncated = ref(false)
 const messageListRef = ref(null)
 const openMenuId = ref(null)
+const showSidebar = ref(false)
+const currentConvTitle = computed(() => {
+  const c = sessions.value.find(s => s.session_id === currentSessionId.value)
+  return c ? c.title : ''
+})
 
 function toggleMenu(id) {
   openMenuId.value = openMenuId.value === id ? null : id
@@ -188,6 +211,23 @@ async function selectConversation(conv) {
   scrollToBottom()
 }
 
+async function copyContent(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    message.success('已复制')
+  } catch {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.style.position = 'fixed'
+    ta.style.left = '-9999px'
+    document.body.appendChild(ta)
+    ta.select()
+    try { document.execCommand('copy') } catch {}
+    document.body.removeChild(ta)
+    message.success('已复制')
+  }
+}
+
 function scrollToBottom() {
   setTimeout(() => {
     const el = messageListRef.value
@@ -202,6 +242,8 @@ async function sendMessage() {
   if (!currentSessionId.value) {
     await newConversation(text)
   }
+
+  isTruncated.value = false
 
   const now = new Date()
   const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`
@@ -225,6 +267,48 @@ async function sendMessage() {
     },
     () => {
       loading.value = false
+    },
+    () => {
+      // 回答被截断
+      isTruncated.value = true
+      loading.value = false
+      scrollToBottom()
+    }
+  )
+}
+
+// 继续生成被截断的回答
+function continueGeneration() {
+  if (loading.value || !currentSessionId.value) return
+  isTruncated.value = false
+
+  const now = new Date()
+  const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`
+  messages.value.push({ role: 'user', content: '继续', created_date: timeStr })
+  messages.value.push({ role: 'assistant', content: '思考中...', created_date: timeStr })
+  scrollToBottom()
+  loading.value = true
+
+  const sessionId = currentSessionId.value
+  let fullAnswer = ''
+  chatStream("继续", sessionId,
+    (chunk) => {
+      fullAnswer += chunk
+      const last = messages.value.length - 1
+      if (last >= 0) messages.value[last].content = fullAnswer
+      scrollToBottom()
+    },
+    () => {
+      loading.value = false
+      scrollToBottom()
+    },
+    () => {
+      loading.value = false
+    },
+    () => {
+      isTruncated.value = true
+      loading.value = false
+      scrollToBottom()
     }
   )
 }
@@ -298,6 +382,20 @@ async function sendMessage() {
 
 .empty-list { text-align: center; color: #bbb; padding: 40px 0; font-size: 13px; }
 
+/* 继续生成按钮 */
+.continue-wrapper { text-align: right; margin-top: 4px; }
+.continue-btn {
+  padding: 4px 16px;
+  border: 1px solid #1677ff;
+  background: #fff;
+  color: #1677ff;
+  border-radius: 14px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.continue-btn:hover { background: #f0f5ff; }
+
 /* 右侧 */
 .chat-area { flex: 1; display: flex; flex-direction: column; background: #fff; }
 
@@ -310,23 +408,31 @@ async function sendMessage() {
 .row-ai { justify-content: flex-start; }
 .row-user .bubble { order: 0; }
 .row-user .avatar { order: 1; }
+.row-user > div, .row-ai > div { max-width: calc(100% - 48px); width: fit-content; }
 .avatar {
-  width: 36px; height: 36px; border-radius: 50%;
+  width: 36px; height: 36px; min-width: 36px; min-height: 36px;
+  border-radius: 50%; aspect-ratio: 1/1;
   display: flex; align-items: center; justify-content: center;
   font-size: 13px; font-weight: 600; flex-shrink: 0;
+  overflow: hidden;
 }
 .ai-avatar { background: #f0f0f0; color: #666; }
-.user-avatar { background: #1677ff; color: #fff; }
+.user-avatar { background: #52c41a; color: #fff; }
 .bubble {
   padding: 12px 16px; border-radius: 12px;
   line-height: 1.7; font-size: 14px;
-  white-space: pre-wrap; word-break: break-word; max-width: 600px;
+  white-space: pre-wrap; word-break: break-word;
+  max-width: 600px;
 }
 .bubble-user { background: #1677ff; color: #fff; border-bottom-right-radius: 4px; }
 .bubble-ai { background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 4px; }
-.msg-time { font-size: 11px; color: #bbb; margin-top: 4px; }
-.time-left { text-align: left; }
-.time-right { text-align: right; }
+.bubble-actions { margin-top: 2px; }
+.actions-left { text-align: left; }
+.actions-right { text-align: right; }
+.copy-btn { font-size: 13px; cursor: pointer; opacity: 0; transition: opacity 0.2s; color: #bbb; }
+.bubble:hover ~ .bubble-actions .copy-btn,
+.bubble-actions:hover .copy-btn { opacity: 1; }
+.copy-btn:hover { color: #666; }
 
 /* 聊天输入区 */
 .input-area { padding: 16px 24px 24px; border-top: 1px solid #eee; }
@@ -472,5 +578,49 @@ async function sendMessage() {
   border-color: #1677ff;
   color: #1677ff;
   background: #f0f5ff;
+}
+
+/* ====== 移动端适配 ====== */
+.sidebar-overlay {
+  display: none;
+}
+.mobile-topbar { display: none; }
+
+@media (max-width: 768px) {
+  .chat-layout { position: relative; }
+  .sidebar {
+    position: fixed; top: 48px; left: -280px; bottom: 0; z-index: 200;
+    transition: left 0.25s; box-shadow: 4px 0 12px rgba(0,0,0,0.1);
+  }
+  .sidebar-open { left: 0; }
+  .sidebar-overlay {
+    display: block;
+    position: fixed; inset: 0; z-index: 150;
+    background: rgba(0,0,0,0.3);
+  }
+  .mobile-topbar {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid #eee;
+    background: #fff;
+  }
+  .menu-toggle {
+    background: none; border: none; font-size: 20px;
+    cursor: pointer; color: #333; padding: 0;
+  }
+  .mobile-title { font-size: 14px; color: #666; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .messages { padding: 16px; }
+  .bubble { max-width: 85%; font-size: 14px; }
+  .copy-btn { opacity: 1; }
+  .continue-btn { font-size: 12px; }
+  .input-area { padding: 12px 12px 16px; }
+  .input-wrapper textarea { font-size: 14px; }
+  .send-btn { padding: 0 20px; }
+
+  .home-center { padding: 0 20px 60px; }
+  .home-title { font-size: 20px; text-align: center; }
+  .home-input-wrapper { max-width: 100%; }
+  .home-input-wrapper textarea { font-size: 14px; }
+  .suggest-list { gap: 8px; }
+  .suggest-item { font-size: 12px; padding: 6px 12px; }
 }
 </style>

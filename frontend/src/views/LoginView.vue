@@ -53,19 +53,20 @@ async function handleLogin() {
   }
   loading.value = true
   try {
-    const res = await fetch('http://localhost:8001/auth/login', {
+    const apiBase = import.meta.env.VITE_API_BASE || 'http://localhost:8001'
+    const res = await fetch(`${apiBase}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: form.username, password: form.password })
     })
-    const data = await res.json()
-    if (!res.ok) {
-      message.error(data.detail || '登录失败')
+    const body = await res.json()
+    if (body.code !== 200) {
+      message.error(body.message || '登录失败')
       return
     }
-    localStorage.setItem('token', data.token)
-    localStorage.setItem('user_id', data.user_id)
-    localStorage.setItem('username', data.username)
+    localStorage.setItem('token', body.data.token)
+    localStorage.setItem('user_id', body.data.user_id)
+    localStorage.setItem('username', body.data.username)
     router.push('/chat')
   } catch {
     message.error('网络错误')
