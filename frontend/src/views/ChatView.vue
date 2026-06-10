@@ -48,9 +48,16 @@
               {{ msg.role === 'user' ? 'U' : 'AI' }}
             </div>
             <div>
-              <div class="bubble" :class="msg.role === 'user' ? 'bubble-user' : 'bubble-ai'">
-                {{ msg.content }}
+              <!-- 文件预览 -->
+              <div v-if="msg.file_url" class="file-attach" @click="openFile(msg.file_url)">
+                <span class="file-attach-icon">📄</span>
+                <span class="file-attach-name">{{ getFileName(msg.file_url) }}</span>
               </div>
+              <div
+                class="bubble"
+                :class="msg.role === 'user' ? 'bubble-user' : 'bubble-ai'"
+                v-html="renderMarkdown(msg.content)"
+              ></div>
               <div :class="['bubble-actions', msg.role === 'user' ? 'actions-right' : 'actions-left']">
                 <CopyOutlined
                   class="copy-btn"
@@ -68,14 +75,31 @@
 
         <div class="input-area chat-input">
           <div class="input-wrapper">
-            <textarea
-              v-model="inputText"
-              placeholder="输入你的问题..."
-              @keydown.enter.prevent="sendMessage"
-            ></textarea>
-            <button class="send-btn" :disabled="loading || !inputText.trim()" @click="sendMessage">
-              发送
-            </button>
+            <!-- 已选文件 -->
+            <div v-if="uploadFile" class="input-file-preview">
+              <span class="input-file-icon">📄</span>
+              <span class="input-file-name">{{ uploadFile.name }}</span>
+              <span class="input-file-remove" @click="uploadFile = null">✕</span>
+            </div>
+            <div class="input-row">
+              <label class="file-btn" title="上传文件">
+                <input
+                  type="file"
+                  accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx,.xlsx"
+                  hidden
+                  @change="e => { const f = e.target.files?.[0]; if (f) uploadFile = f; e.target.value = '' }"
+                />
+                <span class="file-btn-icon">+</span>
+              </label>
+              <textarea
+                v-model="inputText"
+                placeholder="输入你的问题..."
+                @keydown.enter.prevent="sendMessage"
+              ></textarea>
+              <button class="send-btn" :disabled="loading || !inputText.trim()" @click="sendMessage">
+                发送
+              </button>
+            </div>
           </div>
         </div>
       </template>
@@ -93,14 +117,27 @@
           </div>
           <h1 class="home-title">有什么可以帮助你的？</h1>
           <div class="home-input-wrapper">
-            <textarea
-              v-model="inputText"
-              placeholder="输入你的问题..."
-              @keydown.enter.prevent="sendMessage"
-            ></textarea>
-            <button class="home-send-btn" :disabled="!inputText.trim()" @click="sendMessage">
-              发送
-            </button>
+            <div v-if="uploadFile" class="input-file-preview">
+              <span class="input-file-icon">📄</span>
+              <span class="input-file-name">{{ uploadFile.name }}</span>
+              <span class="input-file-remove" @click="uploadFile = null">✕</span>
+            </div>
+            <div class="home-input-row">
+              <label class="home-file-btn" title="上传文件">
+                <input type="file" accept=".pdf,.png,.jpg,.jpeg,.docx,.pptx,.xlsx" hidden
+                  @change="e => { const f = e.target.files?.[0]; if (f) uploadFile = f; e.target.value = '' }"
+                />
+                <span class="home-file-btn-icon">+</span>
+              </label>
+              <textarea
+                v-model="inputText"
+                placeholder="输入你的问题..."
+                @keydown.enter.prevent="sendMessage"
+              ></textarea>
+              <button class="home-send-btn" :disabled="loading || !inputText.trim()" @click="sendMessage">
+                发送
+              </button>
+            </div>
           </div>
           <div class="suggestions">
             <div class="suggest-title">试试这些问题</div>
@@ -125,7 +162,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { message } from 'ant-design-vue'
 import { MessageOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons-vue'
-import { chatStream, getSessions, getChatMessages, saveSession, deleteSession } from '../api'
+import { chatStream, uploadChatFile, getSessions, getChatMessages, saveSession, deleteSession } from '../api'
 
 const sessions = ref([])
 const messages = ref([])
@@ -136,6 +173,7 @@ const isTruncated = ref(false)
 const messageListRef = ref(null)
 const openMenuId = ref(null)
 const showSidebar = ref(false)
+const uploadFile = ref(null)
 const currentConvTitle = computed(() => {
   const c = sessions.value.find(s => s.session_id === currentSessionId.value)
   return c ? c.title : ''
@@ -228,11 +266,52 @@ async function copyContent(text) {
   }
 }
 
+function renderMarkdown(text) {
+  if (!text) return ''
+  // 没有表格 → 纯文本（做 HTML 转义后通过 v-html 设置）
+  if (!/^\|.+\|\s*$/m.test(text)) return escapeHtml(text)
+  // 有表格 → 表格块转 HTML，其余转义
+  try {
+    return text.replace(/(^\|.+\|\s*$\n?)+/gm, block => {
+      const lines = block.trim().split('\n').filter(l => l.trim())
+      if (lines.length < 2) return escapeHtml(block)
+      const headers = lines[0].split('|').filter(c => c.trim()).map(c => c.trim())
+      const rows = lines.slice(2).map(l =>
+        l.split('|').filter(c => c.trim()).map(c => c.trim())
+      )
+      let html = '<table><thead><tr>'
+      headers.forEach(h => { html += `<th>${escapeHtml(h)}</th>` })
+      html += '</tr></thead><tbody>'
+      rows.forEach(r => {
+        html += '<tr>'
+        r.forEach(c => { html += `<td>${escapeHtml(c)}</td>` })
+        html += '</tr>'
+      })
+      html += '</tbody></table>'
+      return html
+    })
+  } catch {
+    return escapeHtml(text)
+  }
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
 function scrollToBottom() {
   setTimeout(() => {
     const el = messageListRef.value
     if (el) el.scrollTop = el.scrollHeight
   }, 50)
+}
+
+function getFileName(url) {
+  return url.split('/').pop() || url
+}
+
+function openFile(url) {
+  window.open(url, '_blank')
 }
 
 async function sendMessage() {
@@ -244,37 +323,57 @@ async function sendMessage() {
   }
 
   isTruncated.value = false
+  loading.value = true
 
   const now = new Date()
   const timeStr = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`
-  messages.value.push({ role: 'user', content: text, created_date: timeStr })
+  const sessionId = currentSessionId.value
+
+  let fileMd = ''
+  let fileUrl = ''
+  let fileName = ''
+
+  // 1. 如果有文件，先上传拿到 URL 和解析结果
+  if (uploadFile.value) {
+    try {
+      const res = await uploadChatFile(uploadFile.value)
+      fileUrl = res.data.file_url
+      fileMd = res.data.file_md || ''
+      fileName = res.data.file_name || uploadFile.value.name
+    } catch {
+      message.error('文件上传失败')
+      loading.value = false
+      return
+    }
+    uploadFile.value = null
+  }
+
+  // 2. 显示用户消息
+  messages.value.push({ role: 'user', content: text, file_url: fileUrl, created_date: timeStr })
   messages.value.push({ role: 'assistant', content: '思考中...', created_date: timeStr })
   inputText.value = ''
   scrollToBottom()
-  loading.value = true
 
-  const sessionId = currentSessionId.value
+  // 3. 流式问答（携带 file_md / file_url）
   let fullAnswer = ''
-  chatStream(text, sessionId,
-    (chunk) => {
-      fullAnswer += chunk
-      const last = messages.value.length - 1
-      messages.value[last].content = fullAnswer
-    },
-    () => {
-      loading.value = false
-      scrollToBottom()
-    },
-    () => {
-      loading.value = false
-    },
-    () => {
-      // 回答被截断
-      isTruncated.value = true
-      loading.value = false
-      scrollToBottom()
-    }
-  )
+  chatStream(text, sessionId, onData, onDone, onError, onTruncated,
+    { file_md: fileMd, file_url: fileUrl })
+
+  function onData(chunk) {
+    fullAnswer += chunk
+    const last = messages.value.length - 1
+    if (last >= 0) messages.value[last].content = fullAnswer
+  }
+  function onDone() {
+    loading.value = false
+    scrollToBottom()
+  }
+  function onError() { loading.value = false }
+  function onTruncated() {
+    isTruncated.value = true
+    loading.value = false
+    scrollToBottom()
+  }
 }
 
 // 继续生成被截断的回答
@@ -424,29 +523,122 @@ function continueGeneration() {
   white-space: pre-wrap; word-break: break-word;
   max-width: 600px;
 }
+.bubble p { margin: 0; }
 .bubble-user { background: #1677ff; color: #fff; border-bottom-right-radius: 4px; }
 .bubble-ai { background: #f5f5f5; color: #1a1a1a; border-bottom-left-radius: 4px; }
 .bubble-actions { margin-top: 2px; }
 .actions-left { text-align: left; }
 .actions-right { text-align: right; }
+.bubble :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 13px;
+}
+.bubble :deep(th), .bubble :deep(td) {
+  border: 1px solid #d9d9d9;
+  padding: 6px 10px;
+  text-align: left;
+}
+.bubble :deep(th) {
+  background: #f0f5ff;
+  font-weight: 600;
+}
+.bubble :deep(code) {
+  background: #f0f0f0;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'SF Mono', Monaco, monospace;
+}
+.bubble :deep(pre) {
+  background: #f6f8fa;
+  padding: 12px 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.bubble :deep(pre code) {
+  background: none;
+  padding: 0;
+}
 .copy-btn { font-size: 13px; cursor: pointer; opacity: 0; transition: opacity 0.2s; color: #bbb; }
 .bubble:hover ~ .bubble-actions .copy-btn,
 .bubble-actions:hover .copy-btn { opacity: 1; }
 .copy-btn:hover { color: #666; }
 
-/* 聊天输入区 */
-.input-area { padding: 16px 24px 24px; border-top: 1px solid #eee; }
+/* 文件附件（消息中） */
+.file-attach {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  background: rgba(22,119,255,0.06);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+  max-width: 300px;
+}
+.file-attach:hover { background: rgba(22,119,255,0.12); }
+.file-attach-icon { font-size: 18px; }
+.file-attach-name {
+  font-size: 13px;
+  color: #1677ff;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 文件上传按钮 + 输入区 */
 .chat-input .input-wrapper {
   max-width: 800px; margin: 0 auto;
-  display: flex; gap: 12px; align-items: flex-end;
 }
-.chat-input textarea {
+.input-file-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  margin-bottom: 6px;
+  background: #f5f5f5;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.input-file-icon { font-size: 16px; }
+.input-file-name { flex: 1; color: #333; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.input-file-remove {
+  cursor: pointer;
+  color: #999;
+  padding: 2px 6px;
+  font-size: 14px;
+  line-height: 1;
+}
+.input-file-remove:hover { color: #ff4d4f; }
+.input-area { padding: 16px 24px 24px; border-top: 1px solid #eee; }
+.input-row {
+  display: flex; gap: 8px; align-items: flex-end;
+}
+.file-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px; height: 52px;
+  border: 1px solid #e0e0e0;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+.file-btn:hover { border-color: #1677ff; background: #f0f5ff; }
+.file-btn-icon { font-size: 22px; color: #666; line-height: 1; }
+.file-btn:hover .file-btn-icon { color: #1677ff; }
+.input-row textarea {
   flex: 1; height: 52px; padding: 14px 16px;
   border: 1px solid #e0e0e0; border-radius: 12px;
   font-size: 14px; font-family: inherit; resize: none; outline: none;
   transition: border-color 0.2s;
 }
-.chat-input textarea:focus { border-color: #1677ff; box-shadow: 0 0 0 2px rgba(22,119,255,0.1); }
+.input-row textarea:focus { border-color: #1677ff; box-shadow: 0 0 0 2px rgba(22,119,255,0.1); }
 .send-btn {
   height: 52px; padding: 0 28px;
   background: #1677ff; color: #fff; border: none; border-radius: 12px;
@@ -506,12 +698,29 @@ function continueGeneration() {
 .home-input-wrapper {
   width: 100%;
   max-width: 640px;
+  z-index: 1;
+}
+.home-input-row {
   display: flex;
   gap: 12px;
   align-items: flex-end;
-  z-index: 1;
 }
-.home-input-wrapper textarea {
+.home-file-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px; height: 56px;
+  border: 1px solid #e0e0e0;
+  border-radius: 16px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #f8f9fa;
+  flex-shrink: 0;
+}
+.home-file-btn:hover { border-color: #1677ff; background: #fff; }
+.home-file-btn-icon { font-size: 24px; color: #666; line-height: 1; }
+.home-file-btn:hover .home-file-btn-icon { color: #1677ff; }
+.home-input-row textarea {
   flex: 1;
   height: 56px;
   padding: 16px 20px;
@@ -524,7 +733,7 @@ function continueGeneration() {
   transition: all 0.2s;
   background: #f8f9fa;
 }
-.home-input-wrapper textarea:focus {
+.home-input-row textarea:focus {
   border-color: #1677ff;
   box-shadow: 0 0 0 3px rgba(22,119,255,0.08);
   background: #fff;
@@ -613,7 +822,8 @@ function continueGeneration() {
   .copy-btn { opacity: 1; }
   .continue-btn { font-size: 12px; }
   .input-area { padding: 12px 12px 16px; }
-  .input-wrapper textarea { font-size: 14px; }
+  .input-row textarea { font-size: 14px; }
+  .file-btn { width: 40px; height: 44px; }
   .send-btn { padding: 0 20px; }
 
   .home-center { padding: 0 20px 60px; }

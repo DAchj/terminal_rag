@@ -21,6 +21,8 @@ dependencies = [
     "pyjwt>=2.13.0",
     "langchain-openai>=1.2.2",
     "optimum>=2.1.0",
+    "langchain-text-splitters>=1.1.2",
+    "python-multipart>=0.0.29",
 ]
 
 [project.scripts]

@@ -54,7 +54,16 @@ export function chat(question) {
   return api.post('/chat', { question })
 }
 
-export function chatStream(question, sessionId, onData, onDone, onError, onTruncated) {
+export function uploadChatFile(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return api.post('/uploadChatFile', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000  // 5min for Mineru parsing
+  })
+}
+
+export function chatStream(question, sessionId, onData, onDone, onError, onTruncated, extra = {}) {
   const MARKER = '__TRUNCATED__'
   fetch(`${BASE}/chatStream`, {
     method: 'POST',
@@ -62,7 +71,7 @@ export function chatStream(question, sessionId, onData, onDone, onError, onTrunc
       'Content-Type': 'application/json',
       ...getTokenHeader()
     },
-    body: JSON.stringify({ question, session_id: String(sessionId) })
+    body: JSON.stringify({ question, session_id: String(sessionId), file_md: extra.file_md || '', file_url: extra.file_url || '' })
   }).then(async (response) => {
     if (response.status === 401) {
       localStorage.removeItem('token')
@@ -105,6 +114,23 @@ export function chatStream(question, sessionId, onData, onDone, onError, onTrunc
 
 export function addKnowledge(texts) {
   return api.post('/knowledge/add', { texts })
+}
+
+export function uploadKnowledgeFiles(files) {
+  const formData = new FormData()
+  files.forEach(f => formData.append('files', f))
+  return api.post('/knowledge/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000
+  })
+}
+
+export function getCollections() {
+  return api.get('/knowledge/collections')
+}
+
+export function getCollectionData(name) {
+  return api.get(`/knowledge/collection/${encodeURIComponent(name)}`)
 }
 
 export function searchKnowledge(query) {

@@ -1,16 +1,13 @@
 import time
 
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from dotenv import load_dotenv
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, get_buffer_string
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableLambda
-from rich import prompt
-
 from application.config.llm_model import load_model
 from application.config.memory_manager import MemoryManager
-
+from application.tools.test_tools import tools
+import logging
+logger = logging.getLogger(__name__)
 
 class FinishReasonHandler(BaseCallbackHandler):
     """捕获 LLM 的 finish_reason"""
@@ -22,7 +19,7 @@ class FinishReasonHandler(BaseCallbackHandler):
         """LLM 完成时触发"""
         try:
             # response.generations[0][0] 是第一条生成结果
-            print("----------------------进入回答回调------------------------")
+            logger.info("----------------------进入回答回调------------------------")
             gen = response.generations[0][0]
             if gen.generation_info:
                 self.finish_reason = gen.generation_info.get("finish_reason", "stop")
@@ -34,7 +31,7 @@ class LangchainChat:
     def __init__(self, retriever):
         load_dotenv()
         # self.llm = ChatOllama(model=os.environ.get("llm_model"))
-        self.llm = load_model()
+        self.llm = load_model().bind_tools(tools)
         # self.prompt = ChatPromptTemplate.from_template("""
         #                  请根据以下资料回答用户的问题。回答要简洁自然，像正常对话一样。
         #                  历史对话：
@@ -58,8 +55,48 @@ class LangchainChat:
             input_data["history"] = ""
         return self.chater.invoke(input_data)
 
+    def run_agent(self,prompt: str, max_turns: int = 5):
+        """让 LLM 自主决定调哪个工具、调几次"""
+        messages = [{"role": "user", "content": prompt}]
+        turn = 0
+
+        while turn < max_turns:
+            turn += 1
+            print(f"\n--- 第 {turn} 轮 ---")
+
+            response = self.llm.invoke(messages)
+            print(response)
+            messages.append(response)
+
+            # 如果 LLM 没有调用工具，说明它直接回答了
+            if not response.tool_calls:
+                print(f"最终回答: {response.content}")
+                return response.content
+
+            # 遍历 LLM 想调用的每个工具
+            for tool_call in response.tool_calls:
+                tool_name = tool_call["name"]
+                tool_args = tool_call["args"]
+                print(f"调用工具: {tool_name}({tool_args})")
+
+                # 找到对应的工具并执行
+                matched_tool = next(t for t in tools if t.name == tool_name)
+                result = matched_tool.invoke(tool_args)
+
+                print(f"工具返回: {result}")
+
+                # 把工具结果放回消息列表
+                messages.append({
+                    "role": "tool",
+                    "content": json.dumps(result, ensure_ascii=False),
+                    "tool_call_id": tool_call["id"],
+                })
+
+        print("达到最大轮数，结束")
+        return None
+
     # 流式返回方法
-    def streamInvoke(self, input_data, user: dict):
+    def streamInvoke(self, input_data, user: dict, file_md: str = "", file_url: str = ""):
         from application.service.chat_message import create_chat_message
         history_messages = self.memoryger.get_context(session_id=input_data.session_id)
         print(f"----------消息数量{len(history_messages)}---------")
@@ -86,40 +123,44 @@ class LangchainChat:
         # baseRetriever = RunnableLambda(_log_chroma)
 
         longMemorys=longMemoryter.invoke(input_data.question)
+        longMemorysStr=[]
+        if longMemorys:
+            longMemorysStr=[info.page_content for info in longMemorys]
+        # 如果有文件内容，拼接到问题前
+        question_text = input_data.question
+        if file_md:
+            question_text = f"以下是一份文档的内容：\n{file_md}\n\n用户的问题：{input_data.question}"
 
         # 保存用户消息
-        create_chat_message(input_data.session_id, "user", input_data.question)
-        self.memoryger.get_window(session_id=input_data.session_id).chat_memory.add_user_message(input_data.question)
+        create_chat_message(input_data.session_id, "user", question_text, file_url=file_url if file_url else None)
+        self.memoryger.get_window(session_id=input_data.session_id).chat_memory.add_user_message(question_text)
         handler = FinishReasonHandler()
         chunkStrs = ''
-        prompt=f"""
+        prompt = f"""
                          请根据以下资料回答用户的问题。回答要简洁自然，像正常对话一样。
                          历史对话摘要：
-                         {longMemorys}
-                         
+                         {longMemorysStr}
+
                          最近通话记录：
                          {get_buffer_string(history_messages)}
-                         
+
                          资料：
                          {docs}
 
-                         用户问题：{input_data.question}
+                         用户问题：{question_text}
                          """
-        start = time.perf_counter()
-
+        logger.info(f"prompt为{prompt}")
+        logger.info("开始流式调用 LLM...")
         for chunk in self.llm.stream([HumanMessage(content=prompt)],
                                         config={"callbacks": [handler]}, ):
             chunkStr = chunk.content
-            print(chunkStr + "----------------------")
+            logger.info(f"收到 chunk: {chunkStr[:50]}")
             chunkStrs += chunkStr
             yield chunkStr
-        end = time.perf_counter()
-        print(f"执行耗时: {end - start:.4f} 秒")
+        logger.info(f"流式结束, 总长度: {len(chunkStrs)}")
         if handler.finish_reason == "length":
             print("==== 截断了 =====")  # 加一行
             yield "\n__TRUNCATED__"
-        else:
-            print(f"==== finish_reason = {handler.finish_reason} =====")  # 加一行
 
         # 保存模型回答
         create_chat_message(input_data.session_id, "assistant", chunkStrs)
@@ -200,13 +241,10 @@ AI：不客气，还有其他问题吗？
 
 现在请总结：
 总结："""
-        print(prompt)
         response = self.llm.invoke([HumanMessage(content=prompt)])
-        print(response)
         from application.bean_context import chromadb
         memory = response.content.strip()
-        print(memory)
-        print("摘要生成内容为---------------------" + memory)
+        logger.info("摘要生成内容为---------------------" + memory)
         if "NONE" not in  memory:
             chromadb.write_long_memory(texts=[memory], metadata_list=[{"session_id": session_id}])
 
